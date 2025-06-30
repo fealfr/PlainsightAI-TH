@@ -1,0 +1,244 @@
+name: OpenFilter QA Test Suite
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run tests daily at 2 AM UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    # Allow manual triggering
+
+jobs:
+  qa-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.9, 3.10, 3.11]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        working-directory: qa_tests
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Allure CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openjdk-11-jre-headless
+          wget https://github.com/allure-framework/allure2/releases/download/2.24.0/allure-2.24.0.tgz
+          tar -zxf allure-2.24.0.tgz
+          sudo mv allure-2.24.0 /opt/allure
+          sudo ln -s /opt/allure/bin/allure /usr/local/bin/allure
+          allure --version
+
+      - name: Verify test data
+        working-directory: qa_tests
+        run: |
+          ls -la test_data/
+          echo "Test data files:"
+          find test_data/ -name "*.mp4" -exec ls -lh {} \;
+
+      - name: Run Unit Tests
+        working-directory: qa_tests
+        run: |
+          pytest unit/ -v --tb=short \
+            --allure-results-directory=allure-results \
+            --junit-xml=reports/unit-results.xml \
+            -m "unit and not slow"
+
+      - name: Run Integration Tests
+        working-directory: qa_tests
+        run: |
+          pytest integration/ -v --tb=short \
+            --allure-results-directory=allure-results \
+            --junit-xml=reports/integration-results.xml \
+            -m "integration"
+
+      - name: Run End-to-End Tests
+        working-directory: qa_tests
+        run: |
+          pytest end_to_end/ -v --tb=short \
+            --allure-results-directory=allure-results \
+            --junit-xml=reports/e2e-results.xml \
+            -m "functional"
+
+      - name: Run Performance Tests
+        working-directory: qa_tests
+        run: |
+          pytest performance/ -v --tb=short \
+            --allure-results-directory=allure-results \
+            --junit-xml=reports/performance-results.xml \
+            -m "performance and not slow"
+
+      - name: Run Regression Tests
+        working-directory: qa_tests
+        run: |
+          pytest test_regression.py -v --tb=short \
+            --allure-results-directory=allure-results \
+            --junit-xml=reports/regression-results.xml \
+            -m "regression"
+
+      - name: Run Bug Discovery Tests
+        working-directory: qa_tests
+        continue-on-error: true # Bug discovery tests are expected to fail
+        run: |
+          pytest -v --tb=short \
+            --allure-results-directory=allure-results \
+            --junit-xml=reports/bug-discovery-results.xml \
+            -m "bug_discovery"
+
+      - name: Generate Allure Report
+        working-directory: qa_tests
+        if: always()
+        run: |
+          # Ensure results directory exists
+          mkdir -p allure-results
+
+          # Add environment info
+          echo "python.version=${{ matrix.python-version }}" > allure-results/environment.properties
+          echo "platform=${{ runner.os }}" >> allure-results/environment.properties
+          echo "github.actor=${{ github.actor }}" >> allure-results/environment.properties
+          echo "github.ref=${{ github.ref }}" >> allure-results/environment.properties
+          echo "github.sha=${{ github.sha }}" >> allure-results/environment.properties
+          echo "build.date=$(date)" >> allure-results/environment.properties
+
+          # Add executor info
+          cat > allure-results/executor.json << EOF
+          {
+            "name": "GitHub Actions",
+            "type": "github",
+            "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "buildOrder": ${{ github.run_number }},
+            "buildName": "QA Tests #${{ github.run_number }}",
+            "buildUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "reportName": "OpenFilter QA Report",
+            "reportUrl": ""
+          }
+          EOF
+
+          # Generate report
+          allure generate allure-results --clean -o allure-report
+
+      - name: Upload Allure Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: allure-results-${{ matrix.python-version }}
+          path: qa_tests/allure-results/
+          retention-days: 30
+
+      - name: Upload Allure Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: allure-report-${{ matrix.python-version }}
+          path: qa_tests/allure-report/
+          retention-days: 30
+
+      - name: Upload Test Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports-${{ matrix.python-version }}
+          path: qa_tests/reports/
+          retention-days: 30
+
+      - name: Publish Test Results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: QA Test Results (Python ${{ matrix.python-version }})
+          path: qa_tests/reports/*.xml
+          reporter: java-junit
+          fail-on-error: false
+
+  publish-allure-report:
+    runs-on: ubuntu-latest
+    needs: qa-tests
+    if: always() && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages
+
+      - name: Download Allure Reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: allure-report-*
+          path: allure-reports
+          merge-multiple: true
+
+      - name: Copy Allure Report
+        run: |
+          # Use the latest Python version report (3.11) as primary
+          if [ -d "allure-reports/allure-report-3.11" ]; then
+            cp -r allure-reports/allure-report-3.11/* gh-pages/
+          else
+            # Fallback to any available report
+            latest_report=$(ls allure-reports/ | sort -V | tail -1)
+            cp -r allure-reports/$latest_report/* gh-pages/
+          fi
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: gh-pages
+          commit_message: "Update QA test report from ${{ github.sha }}"
+
+  notify-results:
+    runs-on: ubuntu-latest
+    needs: qa-tests
+    if: always()
+
+    steps:
+      - name: Notify Success
+        if: needs.qa-tests.result == 'success'
+        run: |
+          echo "✅ QA Tests passed successfully!"
+          echo "All test suites completed without critical failures."
+
+      - name: Notify Failure
+        if: needs.qa-tests.result == 'failure'
+        run: |
+          echo "❌ QA Tests failed!"
+          echo "Check the test reports for details."
+          exit 1
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## QA Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ needs.qa-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Python Versions**: 3.9, 3.10, 3.11" >> $GITHUB_STEP_SUMMARY
+          echo "- **Test Suites**: Unit, Integration, E2E, Performance, Regression, Bug Discovery" >> $GITHUB_STEP_SUMMARY
+          echo "- **Reports**: Available in artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- **Allure Report**: Published to GitHub Pages (main branch)" >> $GITHUB_STEP_SUMMARY

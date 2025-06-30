@@ -1,0 +1,104 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["openfilter*"]
+
+[project]
+name = "openfilter"
+readme = "README.md"
+requires-python = ">=3.10, <3.13"
+license = "Apache-2.0"
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+dynamic = ["version"]
+
+dependencies = [
+  "numpy==1.26.4",
+  "opencv-python-headless==4.10.0.84",
+  "psutil==5.9.8",
+  "pyzmq==26.2.0",
+  "requests==2.32.4",
+]
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }
+
+[tool.distutils.bdist_wheel]
+python-tag = "py3"
+
+[project.scripts]
+openfilter = "openfilter.cli.__main__:main"
+
+
+[project.optional-dependencies]
+
+dev = [
+  "build==1.2.1",
+  "docker==7.1.0",
+  "setuptools==72.2.0",  # already included in base deps
+  "twine>=6.1.0,<7",
+  "wheel==0.44.0",
+  "pytest==8.3.4",
+  "jq==1.8.0",
+  "pytest-cov==6.0.0",
+]
+
+mqtt_out = [
+  "paho-mqtt==1.6.1",
+  "setuptools==72.2.0",
+]
+
+recorder = []
+
+rest = [
+  "fastapi==0.89.0",
+  "uvicorn==0.20.0",
+  "python-multipart==0.0.9",
+]
+
+util = []
+video = []
+
+video_in = [
+  "setuptools==72.2.0",
+  "vidgear[core]==0.3.3",
+  "boto3>=1.26.0",
+]
+
+video_out = [
+  "setuptools==72.2.0",
+  "vidgear[core]==0.3.3",
+]
+
+webvis = [
+  "fastapi==0.89.0",
+  "uvicorn==0.20.0",
+]
+
+all = [
+  "setuptools==72.2.0",
+
+  "paho-mqtt==1.6.1",
+
+  "fastapi==0.89.0",
+  "uvicorn==0.20.0",
+  "python-multipart==0.0.9",
+
+  "google-cloud-monitoring==2.22.2",
+  "google-cloud-storage==2.17.0",
+
+  "vidgear[core]==0.3.3",
+  "boto3>=1.26.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = "src"
